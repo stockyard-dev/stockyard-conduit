@@ -1,12 +1,24 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB}
-type Sync struct{ID int64 `json:"id"`;Name string `json:"name"`;SourceURL string `json:"source_url"`;DestURL string `json:"dest_url"`;Schedule string `json:"schedule"`;LastStatus string `json:"last_status"`;LastRun *string `json:"last_run"`;RunCount int `json:"run_count"`;CreatedAt time.Time `json:"created_at"`}
-type SyncRun struct{ID int64 `json:"id"`;SyncID int64 `json:"sync_id"`;Status string `json:"status"`;BytesMoved int64 `json:"bytes_moved"`;Error string `json:"error"`;RanAt time.Time `json:"ran_at"`}
-func Open(d string)(*DB,error){os.MkdirAll(d,0755);dsn:=filepath.Join(d,"conduit.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);migrate(db);return &DB{db},nil}
-func migrate(db *sql.DB){db.Exec(`CREATE TABLE IF NOT EXISTS syncs(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,source_url TEXT NOT NULL,dest_url TEXT NOT NULL,schedule TEXT DEFAULT '@daily',last_status TEXT DEFAULT '',last_run TEXT,run_count INTEGER DEFAULT 0,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS sync_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,sync_id INTEGER NOT NULL,status TEXT NOT NULL,bytes_moved INTEGER DEFAULT 0,error TEXT DEFAULT '',ran_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)}
-func(db *DB)Create(s *Sync)error{res,err:=db.Exec(`INSERT INTO syncs(name,source_url,dest_url,schedule)VALUES(?,?,?,?)`,s.Name,s.SourceURL,s.DestURL,s.Schedule);if err!=nil{return err};s.ID,_=res.LastInsertId();return nil}
-func(db *DB)List()([]Sync,error){rows,_:=db.Query(`SELECT id,name,source_url,dest_url,schedule,last_status,last_run,run_count,created_at FROM syncs ORDER BY created_at DESC`);defer rows.Close();var out[]Sync;for rows.Next(){var s Sync;rows.Scan(&s.ID,&s.Name,&s.SourceURL,&s.DestURL,&s.Schedule,&s.LastStatus,&s.LastRun,&s.RunCount,&s.CreatedAt);out=append(out,s)};return out,nil}
-func(db *DB)RecordRun(r *SyncRun){res,_:=db.Exec(`INSERT INTO sync_runs(sync_id,status,bytes_moved,error)VALUES(?,?,?,?)`,r.SyncID,r.Status,r.BytesMoved,r.Error);r.ID,_=res.LastInsertId();db.Exec(`UPDATE syncs SET last_status=?,last_run=CURRENT_TIMESTAMP,run_count=run_count+1 WHERE id=?`,r.Status,r.SyncID)}
-func(db *DB)Delete(id int64){db.Exec(`DELETE FROM sync_runs WHERE sync_id=?`,id);db.Exec(`DELETE FROM syncs WHERE id=?`,id)}
-func(db *DB)Stats()(map[string]interface{},error){var s int;db.QueryRow(`SELECT COUNT(*) FROM syncs`).Scan(&s);return map[string]interface{}{"syncs":s},nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Pipe struct{
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Source string `json:"source"`
+	Destination string `json:"destination"`
+	Transform string `json:"transform"`
+	Enabled string `json:"enabled"`
+	ThroughputPerSec int `json:"throughput"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"conduit.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS pipes(id TEXT PRIMARY KEY,name TEXT NOT NULL,source TEXT DEFAULT '',destination TEXT DEFAULT '',transform TEXT DEFAULT '',enabled TEXT DEFAULT 'true',throughput INTEGER DEFAULT 0,created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Pipe)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO pipes(id,name,source,destination,transform,enabled,throughput,created_at)VALUES(?,?,?,?,?,?,?,?)`,e.ID,e.Name,e.Source,e.Destination,e.Transform,e.Enabled,e.ThroughputPerSec,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Pipe{var e Pipe;if d.db.QueryRow(`SELECT id,name,source,destination,transform,enabled,throughput,created_at FROM pipes WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Source,&e.Destination,&e.Transform,&e.Enabled,&e.ThroughputPerSec,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Pipe{rows,_:=d.db.Query(`SELECT id,name,source,destination,transform,enabled,throughput,created_at FROM pipes ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Pipe;for rows.Next(){var e Pipe;rows.Scan(&e.ID,&e.Name,&e.Source,&e.Destination,&e.Transform,&e.Enabled,&e.ThroughputPerSec,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM pipes WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM pipes`).Scan(&n);return n}

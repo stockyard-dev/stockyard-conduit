@@ -1,7 +1,0 @@
-package server
-import("encoding/json";"io";"net/http";"strconv";"github.com/stockyard-dev/stockyard-conduit/internal/store")
-func(s *Server)handleList(w http.ResponseWriter,r *http.Request){list,_:=s.db.List();if list==nil{list=[]store.Sync{}};writeJSON(w,200,list)}
-func(s *Server)handleCreate(w http.ResponseWriter,r *http.Request){var syn store.Sync;json.NewDecoder(r.Body).Decode(&syn);if syn.Name==""||syn.SourceURL==""||syn.DestURL==""{writeError(w,400,"name, source_url, dest_url required");return};if syn.Schedule==""{syn.Schedule="@daily"};s.db.Create(&syn);writeJSON(w,201,syn)}
-func(s *Server)handleDelete(w http.ResponseWriter,r *http.Request){id,_:=strconv.ParseInt(r.PathValue("id"),10,64);s.db.Delete(id);writeJSON(w,200,map[string]string{"status":"deleted"})}
-func(s *Server)handleRun(w http.ResponseWriter,r *http.Request){id,_:=strconv.ParseInt(r.PathValue("id"),10,64);syncs,_:=s.db.List();var src string;for _,syn:=range syncs{if syn.ID==id{src=syn.SourceURL;break}};run:=&store.SyncRun{SyncID:id};if src!=""{resp,err:=http.Get(src);if err!=nil{run.Status="failed";run.Error=err.Error()}else{defer resp.Body.Close();data,_:=io.ReadAll(resp.Body);run.BytesMoved=int64(len(data));run.Status="success"}}else{run.Status="failed";run.Error="sync not found"};s.db.RecordRun(run);writeJSON(w,200,run)}
-func(s *Server)handleOverview(w http.ResponseWriter,r *http.Request){m,_:=s.db.Stats();writeJSON(w,200,m)}
